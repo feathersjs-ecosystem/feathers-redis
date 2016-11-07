@@ -3,51 +3,48 @@
   "description": "A Feathers redis service adapter",
   "version": "0.0.1",
   "homepage": "https://github.com/feathersjs/feathers-redis",
-  "main": "lib/",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/feathersjs/feathers-redis.git"
+  },
+  "bugs": {
+    "url": "https://github.com/feathersjs/feathers-redis/issues"
+  },
+  "license": "MIT",
   "keywords": [
     "feathers",
     "feathers-plugin",
     "REST",
     "Socket.io",
     "realtime",
-    "service",
-    "redis"
-],
-  "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "git://github.com/feathersjs/feathers-redis.git"
-  },
+    "redis",
+    "service"
+  ],
   "author": {
     "name": "Feathers contributors",
     "email": "hello@feathersjs.com",
     "url": "https://feathersjs.com"
   },
   "contributors": [
+    "Marshall Thompson <marshall@creativeideal.net> (https://github.com/marshallswain)",
     "Eric Kryski <e.kryski@gmail.com> (http://erickryski.com)",
     "David Luecke <daff@neyeon.de> (http://neyeon.com)",
-    "Marshall Thompson <marshall@creativeideal.net>",
     "Paul Whittemore <dev@appurist.com> (http://appurist.com)"
   ],
-  "bugs": {
-    "url": "https://github.com/feathersjs/feathers-redis/issues"
-  },
-  "engines": {
-    "node": ">= 4.6.0"
-  },
+  "main": "lib/",
   "scripts": {
     "prepublish": "npm run compile",
     "publish": "git push origin --tags && npm run changelog && git push origin",
+    "changelog": "github_changelog_generator && git add CHANGELOG.md && git commit -am \"Updating changelog\"",
     "release:patch": "npm version patch && npm publish",
     "release:minor": "npm version minor && npm publish",
     "release:major": "npm version major && npm publish",
-    "changelog": "github_changelog_generator && git add CHANGELOG.md && git commit -am \"Updating changelog\"",
     "compile": "rimraf lib/ && babel -d lib/ src/",
     "watch": "babel --watch -d lib/ src/",
-    "lint": "semistandard src/**/*.js test/**/*.js --fix",
+    "lint": "eslint-if-supported semistandard --fix",
     "mocha": "mocha --opts mocha.opts",
     "coverage": "istanbul cover node_modules/mocha/bin/_mocha -- --opts mocha.opts",
-    "test": "npm run compile && npm run lint && npm run coverage",
+    "test": "rimraf db-data && npm run compile && npm run lint && npm run coverage",
     "start": "npm run compile && node example/app"
   },
   "semistandard": {
@@ -59,14 +56,16 @@
       "/lib"
     ]
   },
-  "directories": {
-    "lib": "lib"
+  "engines": {
+    "node": ">=0.10.0",
+    "npm": ">=1.4.0"
   },
   "dependencies": {
     "debug": "^2.2.0",
     "feathers-commons": "^0.7.1",
     "feathers-errors": "^2.4.0",
     "feathers-query-filters": "^2.0.0",
+    "redis": "^2.6.2",
     "uberproto": "^1.2.0"
   },
   "devDependencies": {
@@ -74,15 +73,15 @@
     "babel-core": "^6.17.0",
     "babel-plugin-add-module-exports": "^0.2.1",
     "babel-preset-es2015": "^6.16.0",
-    "chai": "^3.5.0",
-    "body-parser": "^1.14.1",
+    "body-parser": "^1.13.2",
+    "chai": "^3.0.0",
     "eslint-if-supported": "^1.0.1",
     "feathers": "^2.0.0-pre.4",
-    "feathers-rest": "^1.2.2",
+    "feathers-rest": "^1.3.0",
     "feathers-service-tests": "^0.8.0",
     "feathers-socketio": "^1.3.3",
     "istanbul": "^1.1.0-alpha.1",
-    "mocha": "^3.1.2",
+    "mocha": "^3.0.1",
     "rimraf": "^2.5.4",
     "semistandard": "^9.1.0"
   }
