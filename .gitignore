@@ -64,6 +64,9 @@ Session.vim
 # node-waf configuration
 .lock-wscript
 
+# if yarn is being used instead of (or in addition to) npm
+yarn.lock
+
 # Coverage directory used by tools like istanbul
 coverage
 
