@@ -3,11 +3,15 @@ import path from 'path';
 import assert from 'assert';
 import feathers from 'feathers';
 import redis from 'redis';
+import Promise from 'bluebird';
 import { base, example } from 'feathers-service-tests';
 import errors from 'feathers-errors';
 
 import server from './test-app';
 import service from '../src';
+
+Promise.promisifyAll(redis.RedisClient.prototype);
+Promise.promisifyAll(redis.Multi.prototype);
 
 function createService (name, options) {
   // Redis ids do not seem to be generated sequentially but sorted lexigraphically

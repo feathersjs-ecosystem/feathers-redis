@@ -1,9 +1,13 @@
-const redis = require('Redis');
 const feathers = require('feathers');
 const rest = require('feathers-rest');
 const socketio = require('feathers-socketio');
 const bodyParser = require('body-parser');
+const redis = require('redis');
+const Promise = require('bluebird');
 const service = require('../lib');
+
+Promise.promisifyAll(redis.RedisClient.prototype);
+Promise.promisifyAll(redis.Multi.prototype);
 
 // Connect to the db, create and register a Feathers service.
 const db = redis.createClient();
