@@ -3,8 +3,11 @@ const rest = require('feathers-rest');
 const socketio = require('feathers-socketio');
 const handler = require('feathers-errors/handler');
 const bodyParser = require('body-parser');
-const redis = require('redis');
+const Promise = require('bluebird');
 const service = require('../lib');
+
+// var to allow promisifyAll
+var redis = require('redis');
 
 const port = 3030;
 
@@ -15,6 +18,7 @@ const redisOptions = {
   // host: 'host.com'
   // port: 6379,
   // password: 'abc123',
+  db: 0, // the default, if set, redis will run select(db) on connect
   host: 'localhost' // the default, so it could be left out
 };
 
@@ -29,37 +33,61 @@ const app = feathers()
 // Turn on URL-encoded parser for REST services
 .use(bodyParser.urlencoded({extended: true}));
 
-const promise = new Promise(function (resolve) {
-  // Connect to your Redis client instance(s)
-  redis.createClient(redisOptions).then(function (db) {
-    // Connect to the db, create and register a Feathers service.
-    app.use('/messages', service({
-      Model: db,
-      paginate: {
-        default: 2,
-        max: 4
-      }
-    }));
+Promise.promisifyAll(redis.RedisClient.prototype);
+Promise.promisifyAll(redis.Multi.prototype);
 
-    // A basic error handler, just like Express
-    app.use(handler());
+// Connect to your Redis client instance(s)
+var client = redis.createClient(redisOptions);
 
-    // Create a dummy Message
-    app.service('messages').create({
-      text: 'Sample message: Oh hai!'
-    }).then(function (message) {
-      console.log('Created message', message);
-    });
+client.set('testkey', 'testvalue');
+client.setAsync('asynckey', 'asyncvalue');
 
-    // Start the server
-    var server = app.listen(port);
-    server.on('listening', function () {
-      console.log('Feathers Message Redis service running on 127.0.0.1:3030');
-      resolve(server);
-    });
-  }).catch(function (error) {
-    console.error(error);
-  });
+app.use('/messages', service({
+  Model: client,
+  paginate: {
+    default: 2,
+    max: 4
+  },
+  monitor: true,
+  idPrefix: 'messages:',
+  redisOptions: redisOptions
+}));
+
+// A basic error handler, just like Express
+app.use(handler());
+
+// Create a dummy Message
+app.service('messages').create({
+  _id: 'messages:1',
+  text: 'message1: Oh hai!'
+}).then(function () {
+  console.log('Created message 1.');
+  app.service('messages').get('messages:1').then(
+    function (data) {
+      console.dir(data);
+    }
+  );
+})
+.catch(function (err) {
+  console.error('create 1 error: ' + err.message);
 });
 
-module.exports = promise;
+app.service('messages').create(
+  [
+    {
+      text: 'message 2: hai2u2!'
+    }, {
+      _id: 'messages:mySpecialMessage',
+      text: 'message 3: how r u?'
+    }
+  ]).then(function () {
+    console.log('Created message 2 and 3.');
+  })
+  .catch(function (err) {
+    console.error('create 2 error: ' + err.message);
+  });
+
+// Start the server
+app.listen(port, function () {
+  console.log(`Feathers server listening on port ${port}`);
+});
