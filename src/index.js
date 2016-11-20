@@ -1,9 +1,11 @@
-import omit from 'lodash.omit';
 import Proto from 'uberproto';
 import filter from 'feathers-query-filters';
 import errors from 'feathers-errors';
 import uuid from 'node-uuid';
 import Promise from 'bluebird';
+import { sorter, matcher, select } from 'feathers-commons';
+
+const DEFAULT_ID = 'id';  // or '_id' ?
 
 // Create the service.
 class Service {
@@ -17,37 +19,78 @@ class Service {
     }
 
     this.Model = options.Model;
-    this.id = options.id || '_id';
-    this.idPrefix = options.idPrefix; // redis namespace
+    this.id = options.id || DEFAULT_ID;
+    this.idPrefix = options.idPrefix || null; // redis namespace
+    this.autoPrefix = options.autoPrefix || false;
     this.events = options.events || [];
     this.paginate = options.paginate || {};
     this.useMonitor = options.monitor || false;
+    this.selected = options.db || 0;
+    this.path = 'unknown';
 
-    this.Model.on('connect', function () {
-      console.log('Connected to Redis');
-    });
+    let _this = this;
 
+    if (this.useMonitor) {
+      this.Model.on('monitor', function (time, args, rawReply) {
+        if (_this.useMonitor) {
+          console.log(time + ': ' + args); // 1458910076.446514:['set', 'foo', 'bar']
+        }
+      });
+    }
     this.Model.on('error', function (err) {
       console.log('Redis error: ' + err);
     });
 
-    if (this.useMonitor) {
-      this.Model.on('monitor', function (time, args, rawReply) {
-        console.log(time + ': ' + args); // 1458910076.446514:['set', 'foo', 'bar']
-      });
-    }
-    console.log('feathers-redis initialized.');
+    this.Model.on('connect', function () {
+      if (_this.useMonitor) {
+        console.log('monitor: connected to Redis');
+      }
+    });
+
+    this.Model.on('end', function () {
+      if (_this.useMonitor) {
+        console.log('monitor: connection to Redis closed');
+      }
+    });
+
+    this.Model.on('reconnecting', function () {
+      if (_this.useMonitor) {
+        console.log('monitor: reconnecting to Redis');
+      }
+    });
   }
 
   extend (obj) {
     return Proto.extend(obj, this);
   }
 
+  _pick (source, ...keys) {
+    const result = {};
+    for (let key of keys) {
+      result[key] = source[key];
+    }
+    return result;
+  }
+
+  setup (app, path) {
+    this.app = app;
+    this.path = path;
+    if (!this.idPrefix) {
+      this.idPrefix = path + ':'; // e.g. 'todos:' for 'todos:123' IDs
+    }
+    console.log('setup: feathers-redis initialized for: ' + path);
+  }
+
   _newId () {
     var buffer = new Buffer(16);
     uuid.v4(null, buffer, 0);
     var id = uuid.unparse(buffer);
-    return (this.idPrefix) ? this.idPrefix + id : id;
+    if (this.autoPrefix && this.idPrefix) {
+      if (!id.startsWith(this.idPrefix)) {
+        id = this.idPrefix + id;
+      }
+    }
+    return id;
   }
 
   _multiOptions (id, params) {
@@ -74,46 +117,119 @@ class Service {
     return select;
   }
 
-  _find (params, count, getFilter = filter) {
-    // Start with finding all, and limit when necessary.
-    let { filters, query } = getFilter(params.query || {});
-    let q = this.Model.get(query);
-
-    if (filters.$select) {
-      q = this.Model.get(query, this._getSelect(filters.$select));
+  // This actually does the Redis SCAN query to return the IDs that match.
+  _scan (query, limit) {
+    if (this.useMonitor) {
+      console.log('monitor: _scan:', query);
     }
+
+    for (let member in query) {
+      // This only supports query by id (redis.scan).
+      if (member !== this.id) {
+        throw new errors.AssertionError('_scan: redis query only supports id field');
+      }
+    }
+    // This only supports query by id (redis.scan).
+    let id = query.id;  // this can be a pattern
+    let args = [0];
+    args.push('match', '*');
+    if (limit) {
+      // redis has fuzzy limits, often off by a few. ensure it has enough.
+      args.push('count', (limit * 2));
+    }
+    if (this.useMonitor) {
+      console.log('monitor: _scan:', args);
+    }
+    return this.Model.scanAsync(args)
+    .then(data => {
+      if (!data) {
+        throw new errors.NotFound(`No record found for id 'scan'`);
+      }
+
+      if (this.useMonitor) {
+        console.log('monitor: _scan(' + id + ') =', data);
+      }
+      return {
+        cursor: data[0],
+        keys: data[1]
+      };
+    });
+  }
+
+  _postFilter (data, filters) {
+    const total = data.length;
+    console.log('_find: initial filter to', data.length, 'of', total);
+
+    let values = data.filter(matcher(filters));
 
     if (filters.$sort) {
-      q.sort(filters.$sort);
-    }
-
-    if (filters.$limit) {
-      q.limit(filters.$limit);
+      values.sort(sorter(filters.$sort));
     }
 
     if (filters.$skip) {
-      q.skip(filters.$skip);
+      values = values.slice(filters.$skip);
     }
 
-    const runQuery = total => {
-      return q.toArray().then(data => {
-        return {
-          total,
-          limit: filters.$limit,
-          skip: filters.$skip || 0,
-          data
-        };
-      });
+    if (filters.$limit) {
+      values = values.slice(0, filters.$limit);
+    }
+
+    if (filters.$select) {
+      values = values.map(value => this._pick(values, filters.$select));
+    }
+
+    return {
+      total,
+      limit: filters.$limit,
+      skip: filters.$skip || 0,
+      data: values
     };
+  }
 
-    if (count) {
-      return this.Model.count(query).then(runQuery);
-    }
+  _idToObject (id) {
+    let result = { };
+    result[this.id] = id;
+    return result;
+  }
 
-    return runQuery();
+  _find (params, count, getFilter = filter) {
+    // Start with finding all, and limit when necessary.
+    let {filters, query} = getFilter(params.query || {});
+    return this._scan(query, filters.$limit)
+    .then(data => {
+      let cursor = data.cursor;
+      console.log('_find: scan result: cursor at', cursor);
+      let allKeys = data.keys.map(key => {
+        console.log('_find: scan result:', key);
+        return this._idToObject(key);
+      });
+
+      // Now fetch the actual records for the keys
+      let filteredKeys = allKeys.filter(matcher(filters));
+      console.log('_find: filteredKeys = ', filteredKeys);
+      return filteredKeys;
+    })
+    .then(data => {
+      // get the full records for the matching keys
+      console.log('_find: matching keys:', data);
+      return (data.length >= 1) ? this._get(data) : [ ];
+    })
+    .then(data => {
+      console.log('_find: matching records:', data);
+      let results = this._postFilter(data, filters);
+      console.log('_find: final results:', results);
+      return Promise.resolve(results);
+    })
+    .catch(err => {
+      console.error('_find: exception ', err);
+    });
   }
 
   find (params) {
+    if (this.useMonitor) {
+      console.log('monitor: find(', params);
+    }
+
     const paginate = (params && typeof params.paginate !== 'undefined')
       ? params.paginate : this.paginate;
     const result = this._find(params, !!paginate.default,
@@ -128,12 +244,21 @@ class Service {
   }
 
   _get (id) {
+    if (id === undefined) {
+      console.trace('_get: id is undefined');
+    }
+    if (typeof id === 'object') {
+      console.error('_get with object for id:', id);
+    }
     return this.Model.getAsync(id)
     .then(data => {
       if (!data) {
         throw new errors.NotFound(`No record found for id '${id}'`);
       }
 
+      if (this.useMonitor) {
+        console.log('monitor: get(', id, ') =', data);
+      }
       return data;
     });
   }
@@ -143,7 +268,7 @@ class Service {
   }
 
   _findOrGet (id, params) {
-    if (id === null) {
+    if (!id) {
       return this._find(params).then(page => page.data);
     }
 
@@ -155,13 +280,12 @@ class Service {
       const resource = Object.assign({}, item);
 
       // Generate a Redis ID if we use a custom id
-      if (this.id !== '_id' && typeof resource[this.id] === 'undefined') {
+      if (this.id !== DEFAULT_ID && typeof resource[this.id] === 'undefined') {
         resource[this.id] = this._newId();
       }
       if (!resource[this.id]) {
         resource[this.id] = this._newId();
       }
-
       return resource;
     };
 
@@ -170,7 +294,10 @@ class Service {
       var key = resource[this.id];
       var value = JSON.stringify(resource);
 
-      console.log("Creating resource '" + key + "' = '" + value + "'.");
+      if (this.useMonitor) {
+        console.log('monitor: create(', key, ' =', value);
+      }
+
       return this.Model
         .setAsync(key, value)
         .then(res => console.log(res));
@@ -180,67 +307,63 @@ class Service {
       return Promise.map(data, function (entry) {
         // Promise.map awaits for returned promises.
         return createResource(entry);
-      }).then(function () {
-        console.log('done with array');
       });
     } else {
       return createResource(data);
     }
   }
 
-  _normalizeId (id, data) {
-    if (this.id === '_id') {
-      // Default Redis IDs cannot be updated. The Redis library handles
-      // this automatically.
-      return omit(data, this.id);
-    } else {
-      // If not using the default Redis _id field set the ID to its
-      // previous value. This prevents orphaned documents.
-      return Object.assign({}, data, { [this.id]: id });
-    }
-  }
-
   patch (id, data, params) {
-    const { query, options } = this._multiOptions(id, params);
-    const patchParams = Object.assign({}, params, {
-      query: Object.assign({}, query)
-    });
+    if (this.useMonitor) {
+      console.log('monitor: patch(', id, ',', data);
+    }
 
-    // Account for potentially modified data
-    Object.keys(query).forEach(key => {
-      if (query[key] !== undefined && data[key] !== undefined &&
-        typeof data[key] !== 'object') {
-        patchParams.query[key] = data[key];
+    return this._findOrGet(id, params)
+    .then(function (items) {
+      let patchData = [];
+      if (Array.isArray(items)) {
+        for (var x = 0; x < items.length; x++) {
+          patchData.push(items[x].id, Object.assign({}, items[x], data));
+        }
       } else {
-        patchParams.query[key] = query[key];
+        patchData.push(items.id, Object.assign({}, items, data));
       }
-    });
 
-    // Run the query
-    return this.Model
-    .update(query, { $set: this._normalizeId(id, data) }, options)
-    .then(() => this._findOrGet(id, patchParams));
+      // Run the query
+      return this.Model
+        .msetAsync(patchData)
+        .then(() => this._findOrGet(id, params))
+        .then(select(params, this.id));
+    });
   }
 
   update (id, data, params) {
+    if (this.useMonitor) {
+      console.log('monitor: update(', id, ',', data);
+    }
+
     if (Array.isArray(data) || id === null) {
       return Promise.reject('Not replacing multiple records. Did you mean `patch`?');
     }
 
-    let { query, options } = this._multiOptions(id, params);
-
     return this.Model
-    .update(query, this._normalizeId(id, data), options)
-    .then(() => this._findOrGet(id));
+    .setAsync(id, data)
+    .then(() => this._findOrGet(id))
+    .then(select(params, this.id));
   }
 
   remove (id, params) {
-    let { query, options } = this._multiOptions(id, params);
+    let _this = this;
+    if (this.useMonitor) {
+      console.log('monitor: remove(', id, ',', params);
+    }
 
     return this._findOrGet(id, params)
-    .then(items => this.Model
-      .remove(query, options)
-      .then(() => items));
+      .then(items => {
+        _this.Model.delAsync(id)
+        .then(() => items)
+        .then(select(params, this.id));
+      });
   }
 }
 
