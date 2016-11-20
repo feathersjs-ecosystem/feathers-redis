@@ -49,45 +49,83 @@ app.use('/messages', service({
     max: 4
   },
   monitor: true,
-  idPrefix: 'messages:',
+  db: 1,
+  id: '_id',
+  autoPrefix: true, // enable ID/key prefix:
+  // idPrefix: 'messages:', // this would be the default
+  redisOptions: redisOptions
+}));
+
+app.use('/users', service({
+  Model: client,
+  paginate: {
+    default: 2,
+    max: 4
+  },
+  monitor: true,
+  db: 1,
+  id: '_id',
+  autoPrefix: true, // enable ID/key prefix:
+  idPrefix: 'people:',  // override default
   redisOptions: redisOptions
 }));
 
 // A basic error handler, just like Express
 app.use(handler());
 
+// Message 1 will have the specific numbered ID, 2 will be auto-generated (UUID), 3 will be special text.
+const message1Id = 'messages:1';
+const message3Id = 'messages:mySpecialMessage3';
+
 // Create a dummy Message
 app.service('messages').create({
-  _id: 'messages:1',
+  _id: message1Id,
   text: 'message1: Oh hai!'
-}).then(function () {
-  console.log('Created message 1.');
-  app.service('messages').get('messages:1').then(
-    function (data) {
-      console.dir(data);
-    }
+}).then(function (data) {
+  console.log('app: Created message 1: ', data);
+  app.service('messages').find({_id: 'message1*'}).then(
+    data => console.log('app: get returned:', data)
   );
 })
 .catch(function (err) {
-  console.error('create 1 error: ' + err.message);
+  console.error('app: create 1 error: ' + err.message);
 });
 
+// Try a create passing an array.
 app.service('messages').create(
   [
     {
+      // this one has no id specified, custom or default
       text: 'message 2: hai2u2!'
     }, {
-      _id: 'messages:mySpecialMessage',
+      // this one has a custom text ID
+      _id: message3Id,
       text: 'message 3: how r u?'
     }
-  ]).then(function () {
-    console.log('Created message 2 and 3.');
+  ]).then(function (items) {
+    console.log('app: created message 2 and 3:', items);
+
+    app.service('messages').get(message3Id)
+      .then(function (item) {
+        console.log('app: get message 3 success: ', item);
+      })
+      .catch(function (err) {
+        console.error('app: get message 3 failed: ', err);
+      });
+
+    app.service('messages').remove(message3Id)
+      .then(function () {
+        console.log('app: remove message 3 success.');
+      })
+      .catch(function (err) {
+        console.error('app: remove message 3 failed: ', err);
+      });
   })
   .catch(function (err) {
-    console.error('create 2 error: ' + err.message);
+    console.error('app: create 2 or 3 error: ' + err.message);
   });
 
 // Start the server
 app.listen(port, function () {
-  console.log(`Feathers server listening on port ${port}`);
+  console.log(`app: Feathers server listening on port ${port}`);
 });
