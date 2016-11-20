@@ -19,6 +19,7 @@ let counter = 0;
 
 const todoService = service({
   Model: db,
+  id: 'id',
   paginate: {
     default: 2,
     max: 4

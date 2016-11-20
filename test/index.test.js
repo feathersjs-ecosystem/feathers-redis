@@ -1,5 +1,4 @@
 import { expect } from 'chai';
-import path from 'path';
 import assert from 'assert';
 import feathers from 'feathers';
 import redis from 'redis';
@@ -20,7 +19,7 @@ function createService (name, options) {
   let counter = 0;
 
   const db = redis.createClient();
-  options.filename = path.join('db-data', name);
+//  options.id = 'id';
 
   return service(Object.assign({ Model: db }, options)).extend({
     _find (params) {
