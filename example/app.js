@@ -11,17 +11,6 @@ var redis = require('redis');
 
 const port = 3030;
 
-const redisOptions = {
-  // some example connection configuration options
-  // url: 'redis://h:abc123@host.com:6379'
-  // host: "pub-redis-12345.us-east-1-1.1.ec2.bigredis.blah"
-  // host: 'host.com'
-  // port: 6379,
-  // password: 'abc123',
-  db: 0, // the default, if set, redis will run select(db) on connect
-  host: 'localhost' // the default, so it could be left out
-};
-
 // Create a feathers instance.
 const app = feathers()
 // Enable Socket.io
@@ -36,11 +25,18 @@ const app = feathers()
 Promise.promisifyAll(redis.RedisClient.prototype);
 Promise.promisifyAll(redis.Multi.prototype);
 
-// Connect to your Redis client instance(s)
+const redisOptions = {
+  // some example connection configuration options
+  // url: 'redis://h:abc123@host.com:6379'
+  // host: "pub-redis-12345.us-east-1-1.1.ec2.bigredis.blah"
+  // host: 'host.com'
+  // port: 6379,
+  // password: 'abc123',
+  db: 0, // the default, if set, redis will run select(db) on connect
+  host: 'localhost' // the default, so it could be left out
+};
+// Connect to your Redis client instance(s) with the options above.
 var client = redis.createClient(redisOptions);
-
-client.set('testkey', 'testvalue');
-client.setAsync('asynckey', 'asyncvalue');
 
 app.use('/messages', service({
   Model: client,
@@ -49,7 +45,6 @@ app.use('/messages', service({
     max: 4
   },
   monitor: true,
-  db: 1,
   id: '_id',
   autoPrefix: true, // enable ID/key prefix:
   // idPrefix: 'messages:', // this would be the default
@@ -63,8 +58,7 @@ app.use('/users', service({
     max: 4
   },
   monitor: true,
-  db: 1,
-  id: '_id',
+  id: 'username',
   autoPrefix: true, // enable ID/key prefix:
   idPrefix: 'people:',  // override default
   redisOptions: redisOptions
@@ -77,13 +71,16 @@ app.use(handler());
 const message1Id = 'messages:1';
 const message3Id = 'messages:mySpecialMessage3';
 
+let messages = app.service('messages');
+let users = app.service('users');
+
 // Create a dummy Message
-app.service('messages').create({
+messages.create({
   _id: message1Id,
   text: 'message1: Oh hai!'
 }).then(function (data) {
   console.log('app: Created message 1: ', data);
-  app.service('messages').find({_id: 'message1*'}).then(
+  messages.find({query: {_id: {$like: 'messages:1%'}}}).then(
     data => console.log('app: get returned:', data)
   );
 })
@@ -91,8 +88,23 @@ app.service('messages').create({
   console.error('app: create 1 error: ' + err.message);
 });
 
+// Next try the second service instance
+users.create({
+  username: 'fred',
+  name: 'Fred Flintstone',
+  email: 'fred@slaterock.co'
+}).then(function (data) {
+  console.log('app: Created user : ', data);
+  users.find({query: {username: 'fred'}}).then(
+    user => console.log('app: get(fred) returned:', user)
+  );
+})
+.catch(function (err) {
+  console.error('app: create 1 error: ' + err.message);
+});
+
 // Try a create passing an array.
-app.service('messages').create(
+messages.create(
   [
     {
       // this one has no id specified, custom or default
@@ -105,7 +117,7 @@ app.service('messages').create(
   ]).then(function (items) {
     console.log('app: created message 2 and 3:', items);
 
-    app.service('messages').get(message3Id)
+    messages.get(message3Id)
       .then(function (item) {
         console.log('app: get message 3 success: ', item);
       })
@@ -113,7 +125,7 @@ app.service('messages').create(
         console.error('app: get message 3 failed: ', err);
       });
 
-    app.service('messages').remove(message3Id)
+    messages.remove(message3Id)
       .then(function () {
         console.log('app: remove message 3 success.');
       })
