@@ -5,7 +5,7 @@ import uuid from 'node-uuid';
 import Promise from 'bluebird';
 import { sorter, matcher, select } from 'feathers-commons';
 
-const DEFAULT_ID = 'id';  // or '_id' ?
+const DEFAULT_ID = 'id';  // callers can override in options, e.g. maybe '_id'
 
 // Create the service.
 class Service {
@@ -25,7 +25,7 @@ class Service {
     this.events = options.events || [];
     this.paginate = options.paginate || {};
     this.useMonitor = options.monitor || false;
-    this.selected = options.db || 0;
+
     this.path = 'unknown';
 
     let _this = this;
@@ -81,6 +81,12 @@ class Service {
     console.log('setup: feathers-redis initialized for: ' + path);
   }
 
+  _idToObject (id) {
+    let result = { };
+    result[this.id] = id;
+    return result;
+  }
+
   _newId () {
     var buffer = new Buffer(16);
     uuid.v4(null, buffer, 0);
@@ -122,17 +128,24 @@ class Service {
     if (this.useMonitor) {
       console.log('monitor: _scan:', query);
     }
+    let pattern = '*';
 
     for (let member in query) {
       // This only supports query by id (redis.scan).
-      if (member !== this.id) {
+      if (member === this.id) {
+        pattern = query[this.id];
+        if (pattern['$like']) {
+          pattern = pattern['$like'].replace(/%/g, '*');
+        }
+      } else {
         throw new errors.AssertionError('_scan: redis query only supports id field');
       }
     }
+
     // This only supports query by id (redis.scan).
     let id = query.id;  // this can be a pattern
     let args = [0];
-    args.push('match', '*');
+    args.push('match', pattern);
     if (limit) {
       // redis has fuzzy limits, often off by a few. ensure it has enough.
       args.push('count', (limit * 2));
@@ -184,12 +197,6 @@ class Service {
       skip: filters.$skip || 0,
       data: values
     };
-  }
-
-  _idToObject (id) {
-    let result = { };
-    result[this.id] = id;
-    return result;
   }
 
   _find (params, count, getFilter = filter) {
