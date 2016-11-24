@@ -3,7 +3,7 @@ import filter from 'feathers-query-filters';
 import errors from 'feathers-errors';
 import uuid from 'node-uuid';
 import Promise from 'bluebird';
-import { sorter, matcher, select } from 'feathers-commons';
+import { sorter, matcher, select, _ } from 'feathers-commons';
 
 const DEFAULT_ID = 'id';  // callers can override in options, e.g. maybe '_id'
 
@@ -25,6 +25,7 @@ class Service {
     this.events = options.events || [];
     this.paginate = options.paginate || {};
     this.useMonitor = options.monitor || false;
+    this.debugLevel = options.debugLevel || 0;
 
     this.path = 'unknown';
 
@@ -38,24 +39,24 @@ class Service {
       });
     }
     this.Model.on('error', function (err) {
-      console.log('Redis error: ' + err);
+      console.error('Redis error: ' + err);
     });
 
     this.Model.on('connect', function () {
-      if (_this.useMonitor) {
+      if (_this.debugLevel >= 2) {
         console.log('monitor: connected to Redis');
       }
     });
 
     this.Model.on('end', function () {
-      if (_this.useMonitor) {
+      if (_this.debugLevel >= 2) {
         console.log('monitor: connection to Redis closed');
       }
     });
 
     this.Model.on('reconnecting', function () {
-      if (_this.useMonitor) {
-        console.log('monitor: reconnecting to Redis');
+      if (_this.debugLevel >= 2) {
+        console.warn('monitor: reconnecting to Redis');
       }
     });
   }
@@ -125,7 +126,7 @@ class Service {
 
   // This actually does the Redis SCAN query to return the IDs that match.
   _scan (query, limit) {
-    if (this.useMonitor) {
+    if (this.debugLevel >= 3) {
       console.log('monitor: _scan:', query);
     }
     let pattern = '*';
@@ -147,19 +148,19 @@ class Service {
     let args = [0];
     args.push('match', pattern);
     if (limit) {
-      // redis has fuzzy limits, often off by a few. ensure it has enough.
-      args.push('count', (limit * 2));
+      args.push('count', limit);
     }
-    if (this.useMonitor) {
+    if (this.debugLevel >= 1) {
       console.log('monitor: _scan:', args);
     }
+
     return this.Model.scanAsync(args)
     .then(data => {
       if (!data) {
         throw new errors.NotFound(`No record found for id 'scan'`);
       }
 
-      if (this.useMonitor) {
+      if (this.debugLevel >= 2) {
         console.log('monitor: _scan(' + id + ') =', data);
       }
       return {
@@ -171,8 +172,6 @@ class Service {
 
   _postFilter (data, filters) {
     const total = data.length;
-    console.log('_find: initial filter to', data.length, 'of', total);
-
     let values = data.filter(matcher(filters));
 
     if (filters.$sort) {
@@ -204,27 +203,26 @@ class Service {
     let {filters, query} = getFilter(params.query || {});
     return this._scan(query, filters.$limit)
     .then(data => {
-      let cursor = data.cursor;
-      console.log('_find: scan result: cursor at', cursor);
+      // console.log('_find: scan result: cursor at', data.cursor);
       let allKeys = data.keys.map(key => {
-        console.log('_find: scan result:', key);
         return this._idToObject(key);
       });
 
-      // Now fetch the actual records for the keys
-      let filteredKeys = allKeys.filter(matcher(filters));
-      console.log('_find: filteredKeys = ', filteredKeys);
-      return filteredKeys;
+      // It may be that only the ID was specified.
+      let resultsQuery = _.omit(query, this.id);
+      if (resultsQuery.length === 0) {
+        return { };
+      }
+
+      // return the filtered key list
+      return allKeys.filter(matcher(resultsQuery));
     })
     .then(data => {
       // get the full records for the matching keys
-      console.log('_find: matching keys:', data);
       return (data.length >= 1) ? this._get(data) : [ ];
     })
     .then(data => {
-      console.log('_find: matching records:', data);
       let results = this._postFilter(data, filters);
-      console.log('_find: final results:', results);
       return Promise.resolve(results);
     })
     .catch(err => {
@@ -233,8 +231,8 @@ class Service {
   }
 
   find (params) {
-    if (this.useMonitor) {
-      console.log('monitor: find(', params);
+    if (this.debugLevel >= 1) {
+      console.log('monitor: find ', params);
     }
 
     const paginate = (params && typeof params.paginate !== 'undefined')
@@ -263,7 +261,7 @@ class Service {
         throw new errors.NotFound(`No record found for id '${id}'`);
       }
 
-      if (this.useMonitor) {
+      if (this.debugLevel >= 1) {
         console.log('monitor: get(', id, ') =', data);
       }
       return data;
@@ -301,13 +299,13 @@ class Service {
       var key = resource[this.id];
       var value = JSON.stringify(resource);
 
-      if (this.useMonitor) {
+      if (this.debugLevel >= 1) {
         console.log('monitor: create(', key, ' =', value);
       }
 
       return this.Model
         .setAsync(key, value)
-        .then(res => console.log(res));
+        .then(res => { if (res !== 'OK') { console.warn(res); } });
     };
 
     if (Array.isArray(data)) {
@@ -321,7 +319,7 @@ class Service {
   }
 
   patch (id, data, params) {
-    if (this.useMonitor) {
+    if (this.debugLevel >= 1) {
       console.log('monitor: patch(', id, ',', data);
     }
 
@@ -345,7 +343,7 @@ class Service {
   }
 
   update (id, data, params) {
-    if (this.useMonitor) {
+    if (this.debugLevel >= 1) {
       console.log('monitor: update(', id, ',', data);
     }
 
@@ -361,7 +359,7 @@ class Service {
 
   remove (id, params) {
     let _this = this;
-    if (this.useMonitor) {
+    if (_this.debugLevel >= 1) {
       console.log('monitor: remove(', id, ',', params);
     }
 
