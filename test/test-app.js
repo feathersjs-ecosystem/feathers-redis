@@ -2,10 +2,11 @@ const feathers = require('feathers');
 const rest = require('feathers-rest');
 const socketio = require('feathers-socketio');
 const bodyParser = require('body-parser');
-const redis = require('redis');
 const Promise = require('bluebird');
 const service = require('../lib');
 
+// var to allow promisifyAll
+var redis = require('redis');
 Promise.promisifyAll(redis.RedisClient.prototype);
 Promise.promisifyAll(redis.Multi.prototype);
 
