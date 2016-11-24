@@ -1,13 +1,15 @@
 const feathers = require('feathers');
 const rest = require('feathers-rest');
 const socketio = require('feathers-socketio');
-const handler = require('feathers-errors/handler');
 const bodyParser = require('body-parser');
+const handler = require('feathers-errors/handler');
 const Promise = require('bluebird');
 const service = require('../lib');
 
 // var to allow promisifyAll
 var redis = require('redis');
+Promise.promisifyAll(redis.RedisClient.prototype);
+Promise.promisifyAll(redis.Multi.prototype);
 
 const port = 3030;
 
@@ -22,9 +24,6 @@ const app = feathers()
 // Turn on URL-encoded parser for REST services
 .use(bodyParser.urlencoded({extended: true}));
 
-Promise.promisifyAll(redis.RedisClient.prototype);
-Promise.promisifyAll(redis.Multi.prototype);
-
 const redisOptions = {
   // some example connection configuration options
   // url: 'redis://h:abc123@host.com:6379'
@@ -38,7 +37,7 @@ const redisOptions = {
 // Connect to your Redis client instance(s) with the options above.
 var client = redis.createClient(redisOptions);
 
-app.use('/messages', service({
+let messagesService = service({
   Model: client,
   paginate: {
     default: 2,
@@ -46,12 +45,13 @@ app.use('/messages', service({
   },
   monitor: true,
   id: '_id',
+  debugLevel: 1,    // some debugging
   autoPrefix: true, // enable ID/key prefix:
   // idPrefix: 'messages:', // this would be the default
   redisOptions: redisOptions
-}));
+});
 
-app.use('/users', service({
+let usersService = service({
   Model: client,
   paginate: {
     default: 2,
@@ -62,8 +62,10 @@ app.use('/users', service({
   autoPrefix: true, // enable ID/key prefix:
   idPrefix: 'people:',  // override default
   redisOptions: redisOptions
-}));
+});
 
+app.use('/messages', messagesService);
+app.use('/users', usersService);
 // A basic error handler, just like Express
 app.use(handler());
 
@@ -78,8 +80,8 @@ let users = app.service('users');
 messages.create({
   _id: message1Id,
   text: 'message1: Oh hai!'
-}).then(function (data) {
-  console.log('app: Created message 1: ', data);
+}).then(function () {
+  console.log('app: Created message 1.');
   messages.find({query: {_id: {$like: 'messages:1%'}}}).then(
     data => console.log('app: get returned:', data)
   );
