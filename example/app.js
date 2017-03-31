@@ -11,7 +11,7 @@ var redis = require('redis');
 Promise.promisifyAll(redis.RedisClient.prototype);
 Promise.promisifyAll(redis.Multi.prototype);
 
-const port = 3030;
+// const port = 3030;
 
 // Create a feathers instance.
 const app = feathers()
@@ -70,13 +70,16 @@ app.use('/users', usersService);
 app.use(handler());
 
 // Message 1 will have the specific numbered ID, 2 will be auto-generated (UUID), 3 will be special text.
+/*
 const message1Id = 'messages:1';
 const message3Id = 'messages:mySpecialMessage3';
 
 let messages = app.service('messages');
+*/
 let users = app.service('users');
 
 // Create a dummy Message
+/*
 messages.create({
   _id: message1Id,
   text: 'message1: Oh hai!'
@@ -89,14 +92,15 @@ messages.create({
 .catch(function (err) {
   console.error('app: create 1 error: ' + err.message);
 });
+*/
 
 // Next try the second service instance
 users.create({
   username: 'fred',
   name: 'Fred Flintstone',
   email: 'fred@slaterock.co'
-}).then(function (data) {
-  console.log('app: Created user : ', data);
+}).then(function () {
+  console.log('app: Created user.');
   users.find({query: {username: 'fred'}}).then(
     user => console.log('app: get(fred) returned:', user)
   );
@@ -105,6 +109,7 @@ users.create({
   console.error('app: create 1 error: ' + err.message);
 });
 
+/*
 // Try a create passing an array.
 messages.create(
   [
@@ -143,3 +148,4 @@ messages.create(
 app.listen(port, function () {
   console.log(`app: Feathers server listening on port ${port}`);
 });
+*/
