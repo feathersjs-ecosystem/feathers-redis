@@ -4,6 +4,7 @@ import errors from 'feathers-errors';
 import uuid from 'node-uuid';
 import Promise from 'bluebird';
 import { sorter, matcher, select, _ } from 'feathers-commons';
+import errorHandler from './error-handler';
 
 const DEFAULT_ID = 'id';  // callers can override in options, e.g. maybe '_id'
 
@@ -124,8 +125,64 @@ class Service {
     return select;
   }
 
+  // We need to jump through hoops (or loops in this case) here
+  // because Redis can return any number of results from 0 to
+  // well beyond limit.  So we need to loop on promises in a
+  // while loop until resolved. This function resursively call
+  // scan, accumulating the results until the returned cursor is 0.
+  _scanLoop (pattern, limit) {
+    let required = limit;
+    let _this = this;
+
+    function scanFrom (cursor, pattern, limit, accum) {
+      // build SCAN command args
+      let args = [ cursor ];
+      args.push('match', pattern);
+      if (limit) {
+        args.push('count', limit);
+      }
+      if (_this.debugLevel >= 1) {
+        console.log('monitor: _scan:', args);
+      }
+      return Promise.try(function () {
+        return _this.Model.scanAsync(args);
+      })
+      .then(data => {
+        if (!data) {
+          throw new errors.NotFound('Invalid data returned on id scan.');
+        }
+        let results = accum.concat(data[1]);
+        if (results.length >= required) {
+          if (results.length > required) {
+            results = results.slice(0, required);
+          }
+          console.log('scanFrom complete1:', results);
+          return results;
+        }
+        // Otherwise we need more data, so execute a SCAN "recursively"
+        // (which isn't recursive if the calls are async).
+        if (data[0]) {  // non-zero cursor?
+          return Promise.try(
+            // repeat the scan, but this time from the resulting cursor
+            scanFrom(data[0], pattern, limit, results)
+          ).then(function (recursiveData) {
+            console.log('scanFrom complete2:', results, ' | ', recursiveData[1]);
+            return results.concat(recursiveData[1]);
+          });
+        } else {
+          // Done looping
+          console.log('scanFrom complete3:', results);
+          return results;
+        }
+      });
+    }
+
+    return scanFrom(0, pattern, limit, [ ]);
+  }
+
   // This actually does the Redis SCAN query to return the IDs that match.
   _scan (query, limit) {
+    // This only supports query by id (redis.scan).
     if (this.debugLevel >= 3) {
       console.log('monitor: _scan:', query);
     }
@@ -143,31 +200,8 @@ class Service {
       }
     }
 
-    // This only supports query by id (redis.scan).
-    let id = query.id;  // this can be a pattern
-    let args = [0];
-    args.push('match', pattern);
-    if (limit) {
-      args.push('count', limit);
-    }
-    if (this.debugLevel >= 1) {
-      console.log('monitor: _scan:', args);
-    }
-
-    return this.Model.scanAsync(args)
-    .then(data => {
-      if (!data) {
-        throw new errors.NotFound(`No record found for id 'scan'`);
-      }
-
-      if (this.debugLevel >= 2) {
-        console.log('monitor: _scan(' + id + ') =', data);
-      }
-      return {
-        cursor: data[0],
-        keys: data[1]
-      };
-    });
+    // query.id can be a pattern
+    return this._scanLoop(pattern, limit);
   }
 
   _postFilter (data, filters) {
@@ -203,7 +237,7 @@ class Service {
     let {filters, query} = getFilter(params.query || {});
     return this._scan(query, filters.$limit)
     .then(data => {
-      // console.log('_find: scan result: cursor at', data.cursor);
+      console.log('_find: scan result: cursor at', data.cursor, data.keys);
       let allKeys = data.keys.map(key => {
         return this._idToObject(key);
       });
@@ -225,9 +259,7 @@ class Service {
       let results = this._postFilter(data, filters);
       return Promise.resolve(results);
     })
-    .catch(err => {
-      console.error('_find: exception ', err);
-    });
+    .catch(errorHandler);
   }
 
   find (params) {
@@ -257,6 +289,7 @@ class Service {
     }
     return this.Model.getAsync(id)
     .then(data => {
+      console.log('getAsync returned data =', data);
       if (!data) {
         throw new errors.NotFound(`No record found for id '${id}'`);
       }
@@ -265,7 +298,8 @@ class Service {
         console.log('monitor: get(', id, ') =', data);
       }
       return data;
-    });
+    })
+    .catch(errorHandler);
   }
 
   get (id, params) {
@@ -339,7 +373,8 @@ class Service {
         .msetAsync(patchData)
         .then(() => this._findOrGet(id, params))
         .then(select(params, this.id));
-    });
+    })
+    .catch(errorHandler);
   }
 
   update (id, data, params) {
@@ -354,7 +389,8 @@ class Service {
     return this.Model
     .setAsync(id, data)
     .then(() => this._findOrGet(id))
-    .then(select(params, this.id));
+    .then(select(params, this.id))
+    .catch(errorHandler);
   }
 
   remove (id, params) {
@@ -364,11 +400,12 @@ class Service {
     }
 
     return this._findOrGet(id, params)
-      .then(items => {
-        _this.Model.delAsync(id)
-        .then(() => items)
-        .then(select(params, this.id));
-      });
+    .then(items => {
+      _this.Model.delAsync(id)
+      .then(() => items)
+      .then(select(params, this.id));
+    })
+    .catch(errorHandler);
   }
 }
 
