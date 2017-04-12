@@ -1,5 +1,7 @@
 # feathers-redis
 
+[![Greenkeeper badge](https://badges.greenkeeper.io/feathersjs/feathers-redis.svg)](https://greenkeeper.io/)
+
 [![Build Status](https://travis-ci.org/feathersjs/feathers-redis.png?branch=master)](https://travis-ci.org/feathersjs/feathers-redis)
 [![Code Climate](https://codeclimate.com/github/feathersjs/feathers-redis/badges/gpa.svg)](https://codeclimate.com/github/feathersjs/feathers-redis)
 [![Test Coverage](https://codeclimate.com/github/feathersjs/feathers-redis/badges/coverage.svg)](https://codeclimate.com/github/feathersjs/feathers-redis/coverage)
