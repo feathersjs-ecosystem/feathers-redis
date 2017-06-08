@@ -1,9 +1,14 @@
-const redis = require('Redis');
 const feathers = require('feathers');
 const rest = require('feathers-rest');
 const socketio = require('feathers-socketio');
 const bodyParser = require('body-parser');
+const Promise = require('bluebird');
 const service = require('../lib');
+
+// var to allow promisifyAll
+var redis = require('redis');
+Promise.promisifyAll(redis.RedisClient.prototype);
+Promise.promisifyAll(redis.Multi.prototype);
 
 // Connect to the db, create and register a Feathers service.
 const db = redis.createClient();
@@ -15,6 +20,7 @@ let counter = 0;
 
 const todoService = service({
   Model: db,
+  id: 'id',
   paginate: {
     default: 2,
     max: 4
