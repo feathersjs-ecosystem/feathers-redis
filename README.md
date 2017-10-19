@@ -9,6 +9,8 @@
 
 > A Feathers redis service adapter
 
+> __Important:__ This is a proof of concept and not published or intended to be used. For further information see [this issue](https://github.com/feathersjs-ecosystem/feathers-redis/issues/4).
+
 ## Installation
 
 ```
